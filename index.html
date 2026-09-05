@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0b1220">
+<title>Territory</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+:root {
+  --bg: #0b1220;
+  --panel-bg: rgba(15, 20, 32, 0.88);
+  --text: #e8edf5;
+  --muted: #93a1b8;
+  --accent: #2f7dfb;
+  --good: #34c37a;
+  --warn: #ffb545;
+  --danger: #e0483f;
+  --border: rgba(255,255,255,0.08);
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#map { position: absolute; inset: 0; z-index: 0; background: var(--bg); }
+
+#hud-top {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 12px 14px;
+  background: linear-gradient(to bottom, rgba(11,18,32,0.92), rgba(11,18,32,0));
+  pointer-events: none;
+}
+#hud-top > * { pointer-events: auto; }
+#app-title { font-size: 15px; font-weight: 700; letter-spacing: 2px; }
+#hud-stats { font-size: 12px; color: var(--muted); margin-top: 3px; }
+#menu-btn {
+  background: var(--panel-bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 7px 11px; font-size: 12px; cursor: pointer; font-weight: 600;
+}
+
+#menu-dropdown {
+  position: absolute; top: 50px; right: 14px; z-index: 1001;
+  background: var(--panel-bg); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden; min-width: 170px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+#menu-dropdown button {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  color: var(--text); padding: 11px 14px; font-size: 13px; cursor: pointer;
+}
+#menu-dropdown button:hover { background: rgba(255,255,255,0.06); }
+#menu-dropdown.hidden { display: none; }
+
+#hex-panel {
+  position: absolute; left: 14px; right: 14px; bottom: 14px; z-index: 1000;
+  background: var(--panel-bg); border: 1px solid var(--border); border-radius: 14px;
+  padding: 12px 16px; display: flex; align-items: center; gap: 14px;
+}
+#hex-count { font-size: 30px; font-weight: 800; min-width: 42px; text-align: center; }
+#hex-count-col { display: flex; flex-direction: column; flex: 1; }
+#hex-count-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+#hex-status { font-size: 13px; margin-top: 3px; color: var(--muted); }
+#hex-status.cooling { color: var(--warn); }
+#hex-status.ready { color: var(--good); }
+
+#recenter-btn {
+  position: absolute; right: 14px; bottom: 92px; z-index: 1000;
+  background: var(--panel-bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 20px; padding: 8px 14px; font-size: 12px; cursor: pointer; display: none;
+}
+#recenter-btn.show { display: block; }
+
+#locating-banner {
+  position: absolute; inset: 0; z-index: 1500; display: flex;
+  align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+  background: rgba(11,18,32,0.85); font-size: 14px; color: var(--muted); text-align: center; padding: 0 30px;
+}
+#locating-banner.hidden { display: none; }
+.spinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.15); border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#gps-banner {
+  position: absolute; top: 52px; left: 14px; right: 14px; z-index: 1200;
+  background: rgba(224,72,63,0.95); color: #fff; border-radius: 10px; padding: 10px 14px;
+  font-size: 13px; display: none; align-items: center; justify-content: space-between; gap: 10px;
+}
+#gps-banner.open { display: flex; }
+#gps-banner span { flex: 1; }
+#gps-banner button {
+  background: rgba(255,255,255,0.2); border: none; color: #fff; padding: 6px 10px;
+  border-radius: 6px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+
+#modal-overlay {
+  position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+#modal-overlay.hidden { display: none; }
+#modal-box {
+  background: #131b2c; border: 1px solid var(--border); border-radius: 16px;
+  padding: 22px; max-width: 380px; width: 100%;
+}
+#modal-title { margin: 0 0 10px; font-size: 17px; }
+#modal-body { font-size: 13px; line-height: 1.55; color: var(--muted); white-space: pre-line; }
+#modal-ok {
+  margin-top: 16px; width: 100%; background: var(--accent); border: none; color: #fff;
+  padding: 11px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+#modal-cancel {
+  margin-top: 8px; width: 100%; background: none; border: 1px solid var(--border); color: var(--muted);
+  padding: 10px; border-radius: 10px; font-size: 13px; cursor: pointer;
+}
+#modal-cancel.hidden { display: none; }
+
+#toast-container {
+  position: absolute; top: 54px; left: 50%; transform: translateX(-50%); z-index: 2100;
+  display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none;
+}
+.toast {
+  background: rgba(15,20,32,0.95); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 14px; border-radius: 20px; font-size: 12px; opacity: 0;
+  transform: translateY(-6px); transition: opacity 0.25s, transform 0.25s; white-space: nowrap;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+.leaflet-control-attribution { background: rgba(11,18,32,0.6) !important; color: var(--muted) !important; font-size: 10px !important; }
+.leaflet-control-attribution a { color: var(--muted) !important; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="hud-top">
+  <div>
+    <div id="app-title">TERRITORY</div>
+    <div id="hud-stats"><span id="stat-hexes">0</span> hexes explored - <span id="stat-visits">0</span> total visits</div>
+  </div>
+  <button id="menu-btn">MENU</button>
+</div>
+
+<div id="menu-dropdown" class="hidden">
+  <button id="menu-howto">How it works</button>
+  <button id="menu-reset">Reset progress</button>
+</div>
+
+<div id="gps-banner">
+  <span id="gps-banner-text">Location access is needed to track hexes.</span>
+  <button id="retry-location">Retry</button>
+</div>
+
+<div id="hex-panel">
+  <div id="hex-count">-</div>
+  <div id="hex-count-col">
+    <div id="hex-count-label">Current hex visits</div>
+    <div id="hex-status">Locating...</div>
+  </div>
+</div>
+
+<button id="recenter-btn">Recenter</button>
+
+<div id="locating-banner">
+  <div class="spinner"></div>
+  <div>Finding your location...</div>
+</div>
+
+<div id="modal-overlay" class="hidden">
+  <div id="modal-box">
+    <h2 id="modal-title"></h2>
+    <div id="modal-body"></div>
+    <button id="modal-ok">Got it</button>
+    <button id="modal-cancel" class="hidden">Cancel</button>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+
+// ================================================================
+//  TERRITORY - a very simple location-based hex exploration tracker.
+//  Single file, no build step, no dependency beyond Leaflet.js (CDN)
+//  and map tiles. Shares its backbone (Leaflet + watchPosition +
+//  localStorage + a flat-top axial hex grid) with PorterGame/Bloom,
+//  but does nothing else: walk around, claim hexes, watch them
+//  deepen in color the more times you visit.
+// ================================================================
+
+// ---- Tunable constants -----------------------------------------
+var CELL_LAT_DEG   = 20 / 111111;        // hex circumradius ~20m (same size as Porter's hex grid)
+var COOLDOWN_MS    = 5 * 60 * 1000;      // re-entering a hex within 5 min of your last COUNTED visit there does not add another visit
+var GRID_MIN_ZOOM  = 16;                 // below this the mesh is skipped entirely (too many hexes to draw cheaply)
+var GRID_MAX_CELLS = 2500;               // hard safety cap regardless of zoom
+var FOLLOW_ZOOM    = 17;                 // zoom level used the first time we get a GPS fix
+var SQ3            = Math.sqrt(3);
+
+// Heat gradient for visited hexes: cool blue (just claimed) through amber
+// to deep red (heavily revisited). heatT() below is the log-scale, no-cap
+// curve that feeds this gradient's 0..1 input.
+var HEAT_LOW  = [56, 132, 255];
+var HEAT_MID  = [255, 196, 40];
+var HEAT_HIGH = [214, 40, 40];
+
+var STORAGE_KEY = "territory_state_v1";
+
+// ---- Persistence --------------------------------------------------
+function loadState() {
+  var raw = null;
+  try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+  var data = null;
+  if (raw) { try { data = JSON.parse(raw); } catch (e) { data = null; } }
+  return {
+    visits: (data && data.visits) || {},          // key "q,r" -> { count, lastEnteredAt }
+    cellLngDeg: (data && data.cellLngDeg) || null,
+    seenIntro: !!(data && data.seenIntro)
+  };
+}
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      visits: state.visits,
+      cellLngDeg: state.cellLngDeg,
+      seenIntro: state.seenIntro
+    }));
+  } catch (e) {}
+}
+
+var state = loadState();
+
+// Longitude-degrees-per-meter shrinks with latitude, so this is locked once
+// at the player's first-ever GPS fix (and persisted) rather than recomputed
+// on every update - recomputing continuously would make hex boundaries
+// drift slightly as the player walks north or south.
+var CELL_LNG_DEG = state.cellLngDeg || null;
+
+// ---- Hex grid math (flat-top axial q,r; grid anchored at lat 0, lng 0) --
+function hexRound(qf, rf) {
+  var sf = -qf - rf;
+  var q = Math.round(qf), r = Math.round(rf), s = Math.round(sf);
+  var dq = Math.abs(q - qf), dr = Math.abs(r - rf), ds = Math.abs(s - sf);
+  if (dq > dr && dq > ds) q = -r - s;
+  else if (dr > ds) r = -q - s;
+  return { q: q, r: r };
+}
+function latLngToHex(lat, lng) {
+  if (!CELL_LNG_DEG) return { q: 0, r: 0 };
+  var nx = lng / CELL_LNG_DEG, ny = lat / CELL_LAT_DEG;
+  return hexRound(2 / 3 * nx, -1 / 3 * nx + SQ3 / 3 * ny);
+}
+function hexKey(q, r) { return q + "," + r; }
+function hexVerticesPx(q, r) {
+  var verts = [];
+  for (var i = 0; i < 6; i++) {
+    var angle = Math.PI / 3 * i;
+    var lat = (SQ3 / 2 * q + SQ3 * r + Math.sin(angle)) * CELL_LAT_DEG;
+    var lng = (3 / 2 * q + Math.cos(angle)) * CELL_LNG_DEG;
+    verts.push(map.latLngToLayerPoint([lat, lng]));
+  }
+  return verts;
+}
+function hexRangeForView() {
+  var b = map.getBounds().pad(0.5);
+  var qs = [], rs = [];
+  [b.getSouth(), b.getNorth()].forEach(function (lat) {
+    [b.getWest(), b.getEast()].forEach(function (lng) {
+      var h = latLngToHex(lat, lng);
+      qs.push(h.q); rs.push(h.r);
+    });
+  });
+  return {
+    minQ: Math.min.apply(null, qs) - 1, maxQ: Math.max.apply(null, qs) + 1,
+    minR: Math.min.apply(null, rs) - 1, maxR: Math.max.apply(null, rs) + 1
+  };
+}
+
+// ---- Heat color for visit count -----------------------------------
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpColor(c1, c2, t) {
+  return [
+    Math.round(lerp(c1[0], c2[0], t)),
+    Math.round(lerp(c1[1], c2[1], t)),
+    Math.round(lerp(c1[2], c2[2], t))
+  ];
+}
+// Asymptotic 0..1 curve: rises quickly on the first few visits, then keeps
+// creeping toward (but never quite reaching) 1 forever - a log scale with
+// no hard visit ceiling, per design.
+function heatT(count) {
+  if (!count || count <= 0) return 0;
+  return 1 - 1 / (1 + Math.log(count + 1));
+}
+function heatColor(t) {
+  return t < 0.5
+    ? lerpColor(HEAT_LOW, HEAT_MID, t / 0.5)
+    : lerpColor(HEAT_MID, HEAT_HIGH, (t - 0.5) / 0.5);
+}
+
+// ---- Map setup ------------------------------------------------------
+var map = L.map("map", { zoomControl: true, minZoom: 3, maxZoom: 19 }).setView([20, 0], 2);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+  maxZoom: 19,
+  attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+}).addTo(map);
+
+// Hex mesh lives on its own canvas pane, above tiles and below markers.
+// Leaflet CSS-transforms this pane live during pan/zoom gestures, so no
+// per-frame redraw is needed - only after the gesture settles (moveend/
+// zoomend/viewreset) do we actually repaint the canvas contents.
+map.createPane("hexPane").style.zIndex = 350;
+var gridRenderer = L.canvas({ pane: "hexPane", padding: 1.0 });
+gridRenderer.addTo(map);
+
+var HEX_STROKE_UNVISITED = "rgba(40,40,40,0.28)";
+var HEX_STROKE_VISITED   = "rgba(20,20,20,0.45)";
+var CURRENT_HEX_STROKE   = "#1b1f27";
+var HEX_FILL_ALPHA       = 0.55;
+
+function drawHexGrid() {
+  if (!gridRenderer._ctx || !gridRenderer._bounds || !CELL_LNG_DEG) return;
+  var ctx = gridRenderer._ctx;
+  var b = gridRenderer._bounds, sz = b.getSize();
+  ctx.clearRect(b.min.x, b.min.y, sz.x, sz.y);
+
+  if (map.getZoom() < GRID_MIN_ZOOM) return; // too zoomed out to draw individual hexes cheaply
+
+  var range = hexRangeForView();
+  var total = (range.maxQ - range.minQ + 1) * (range.maxR - range.minR + 1);
+  if (total > GRID_MAX_CELLS) return;
+
+  for (var q = range.minQ; q <= range.maxQ; q++) {
+    for (var r = range.minR; r <= range.maxR; r++) {
+      var key = hexKey(q, r);
+      var verts = hexVerticesPx(q, r);
+      ctx.beginPath();
+      for (var i = 0; i < verts.length; i++) {
+        if (i === 0) ctx.moveTo(verts[i].x, verts[i].y);
+        else ctx.lineTo(verts[i].x, verts[i].y);
+      }
+      ctx.closePath();
+
+      var rec = state.visits[key];
+      if (rec && rec.count > 0) {
+        var rgb = heatColor(heatT(rec.count));
+        ctx.fillStyle = "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + HEX_FILL_ALPHA + ")";
+        ctx.fill();
+        ctx.strokeStyle = HEX_STROKE_VISITED;
+      } else {
+        ctx.strokeStyle = HEX_STROKE_UNVISITED;
+      }
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      if (key === currentHexKey) {
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = CURRENT_HEX_STROKE;
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+var _gridRedrawPending = false;
+function scheduleGridRedraw() {
+  if (_gridRedrawPending) return;
+  _gridRedrawPending = true;
+  requestAnimationFrame(function () { _gridRedrawPending = false; drawHexGrid(); });
+}
+map.on("moveend zoomend viewreset resize", scheduleGridRedraw);
+
+// ---- User marker ------------------------------------------------------
+var userMarker = null;
+function placeUserMarker(lat, lng) {
+  if (!userMarker) {
+    userMarker = L.circleMarker([lat, lng], {
+      radius: 8, color: "#ffffff", weight: 2, fillColor: "#2f7dfb", fillOpacity: 1
+    }).addTo(map);
+  } else {
+    userMarker.setLatLng([lat, lng]);
+  }
+}
+
+// ---- Entering hexes, cooldown, scoring ---------------------------------
+var currentHexKey = null; // runtime only - which hex the player is standing in right now
+
+function enterHex(q, r) {
+  var key = hexKey(q, r);
+  if (key === currentHexKey) return; // still in the same hex, nothing changed
+  currentHexKey = key;
+
+  var now = Date.now();
+  var rec = state.visits[key];
+  if (!rec) {
+    rec = { count: 0, lastEnteredAt: 0 };
+    state.visits[key] = rec;
+  }
+
+  // Cooldown is measured from the last COUNTED visit, not the last time the
+  // player merely passed through - so ducking out and straight back in
+  // during the window never resets the clock or grants a second credit.
+  if (now - rec.lastEnteredAt >= COOLDOWN_MS) {
+    rec.count += 1;
+    rec.lastEnteredAt = now;
+    saveState();
+    showToast("New hex claimed - visit #" + rec.count);
+    updateStats();
+  }
+
+  updateHexPanel();
+  scheduleGridRedraw();
+}
+
+// ---- HUD ------------------------------------------------------------
+function formatDuration(ms) {
+  var totalSec = Math.max(0, Math.ceil(ms / 1000));
+  var m = Math.floor(totalSec / 60), s = totalSec % 60;
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+function updateHexPanel() {
+  var countEl = document.getElementById("hex-count");
+  var statusEl = document.getElementById("hex-status");
+  if (!currentHexKey) {
+    countEl.textContent = "-";
+    statusEl.textContent = "Locating...";
+    statusEl.className = "";
+    return;
+  }
+  var rec = state.visits[currentHexKey] || { count: 0, lastEnteredAt: 0 };
+  countEl.textContent = rec.count;
+  var remaining = COOLDOWN_MS - (Date.now() - rec.lastEnteredAt);
+  if (remaining > 0) {
+    statusEl.textContent = "Revisit counts again in " + formatDuration(remaining);
+    statusEl.className = "cooling";
+  } else {
+    statusEl.textContent = "Ready to be revisited";
+    statusEl.className = "ready";
+  }
+}
+function updateStats() {
+  var keys = Object.keys(state.visits);
+  var totalVisits = keys.reduce(function (sum, k) { return sum + (state.visits[k].count || 0); }, 0);
+  document.getElementById("stat-hexes").textContent = keys.length;
+  document.getElementById("stat-visits").textContent = totalVisits;
+}
+setInterval(updateHexPanel, 1000);
+
+function showToast(msg) {
+  var el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = msg;
+  document.getElementById("toast-container").appendChild(el);
+  requestAnimationFrame(function () { el.classList.add("show"); });
+  setTimeout(function () {
+    el.classList.remove("show");
+    setTimeout(function () { el.remove(); }, 300);
+  }, 2200);
+}
+
+// ---- Modal (reused for the intro, how-it-works, and reset confirm) -----
+function openModal(opts) {
+  document.getElementById("modal-title").textContent = opts.title;
+  document.getElementById("modal-body").textContent = opts.body;
+  var okBtn = document.getElementById("modal-ok");
+  var cancelBtn = document.getElementById("modal-cancel");
+  okBtn.textContent = opts.okText || "Got it";
+  okBtn.onclick = function () { closeModal(); if (opts.onOk) opts.onOk(); };
+  if (opts.onCancel) {
+    cancelBtn.classList.remove("hidden");
+    cancelBtn.onclick = function () { closeModal(); opts.onCancel(); };
+  } else {
+    cancelBtn.classList.add("hidden");
+    cancelBtn.onclick = null;
+  }
+  document.getElementById("modal-overlay").classList.remove("hidden");
+}
+function closeModal() { document.getElementById("modal-overlay").classList.add("hidden"); }
+
+var HOWTO_TEXT =
+  "Walk around with this page open and location access on.\n\n" +
+  "Every hex you step into for the first time gets claimed. Step into it again later and it counts as another visit - each visit deepens its color, from cool blue toward deep red.\n\n" +
+  "Leaving a hex and coming straight back in does not count twice: a hex only counts again once " + Math.round(COOLDOWN_MS / 60000) + " minutes have passed since your last counted visit there.";
+
+function openHowToModal() {
+  openModal({ title: "How it works", body: HOWTO_TEXT, okText: "Got it" });
+}
+function openIntroModal() {
+  openModal({
+    title: "Welcome to Territory",
+    body: HOWTO_TEXT,
+    okText: "Start exploring",
+    onOk: function () {
+      state.seenIntro = true;
+      saveState();
+      beginLocating();
+    }
+  });
+}
+function openResetModal() {
+  openModal({
+    title: "Reset progress",
+    body: "This clears every hex you have explored on this device. This cannot be undone.",
+    okText: "Reset everything",
+    onOk: function () {
+      state.visits = {};
+      saveState();
+      updateStats();
+      updateHexPanel();
+      scheduleGridRedraw();
+      showToast("Progress reset");
+    },
+    onCancel: function () {}
+  });
+}
+
+// ---- Menu -------------------------------------------------------------
+var menuEl = document.getElementById("menu-dropdown");
+document.getElementById("menu-btn").onclick = function (e) {
+  e.stopPropagation();
+  menuEl.classList.toggle("hidden");
+};
+document.addEventListener("click", function () { menuEl.classList.add("hidden"); });
+document.getElementById("menu-howto").onclick = openHowToModal;
+document.getElementById("menu-reset").onclick = openResetModal;
+
+// ---- Location tracking -------------------------------------------------
+var hasLocated = false;
+var following = true;
+var lastPos = null;
+var recenterBtn = document.getElementById("recenter-btn");
+
+map.on("dragstart", function () {
+  following = false;
+  recenterBtn.classList.add("show");
+});
+recenterBtn.onclick = function () {
+  following = true;
+  recenterBtn.classList.remove("show");
+  if (lastPos) map.panTo(lastPos);
+};
+
+function onLocationUpdate(pos) {
+  document.getElementById("gps-banner").classList.remove("open");
+  var lat = pos.coords.latitude, lng = pos.coords.longitude;
+  lastPos = [lat, lng];
+
+  if (!CELL_LNG_DEG) {
+    CELL_LNG_DEG = CELL_LAT_DEG / Math.cos(lat * Math.PI / 180);
+    state.cellLngDeg = CELL_LNG_DEG;
+    saveState();
+  }
+
+  placeUserMarker(lat, lng);
+
+  var h = latLngToHex(lat, lng);
+  enterHex(h.q, h.r);
+
+  if (!hasLocated) {
+    hasLocated = true;
+    map.setView(lastPos, FOLLOW_ZOOM);
+    document.getElementById("locating-banner").classList.add("hidden");
+  } else if (following) {
+    map.panTo(lastPos, { animate: true });
+  }
+}
+function onLocationError(err) {
+  var banner = document.getElementById("gps-banner");
+  document.getElementById("gps-banner-text").textContent =
+    err.code === 1
+      ? "Location permission denied. Allow location access in your browser settings, then retry."
+      : "Could not get your location. Retry?";
+  banner.classList.add("open");
+}
+function requestLocation() {
+  if (!navigator.geolocation) {
+    document.getElementById("locating-banner").classList.add("hidden");
+    showToast("Geolocation is not supported on this device.");
+    return;
+  }
+  navigator.geolocation.watchPosition(onLocationUpdate, onLocationError, {
+    enableHighAccuracy: true, maximumAge: 5000, timeout: 15000
+  });
+}
+function beginLocating() {
+  document.getElementById("locating-banner").classList.remove("hidden");
+  requestLocation();
+}
+document.getElementById("retry-location").onclick = function () {
+  document.getElementById("gps-banner").classList.remove("open");
+  requestLocation();
+};
+
+// ---- Boot -------------------------------------------------------------
+window.addEventListener("resize", function () { map.invalidateSize(); });
+updateStats();
+updateHexPanel();
+if (!state.seenIntro) {
+  openIntroModal();
+} else {
+  beginLocating();
+}
+</script>
+</body>
+</html>

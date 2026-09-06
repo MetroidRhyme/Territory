@@ -153,6 +153,7 @@ html, body {
 
 <div id="menu-dropdown" class="hidden">
   <button id="menu-howto">How it works</button>
+  <button id="menu-import">Import a GPX track</button>
   <button id="menu-reset">Reset progress</button>
 </div>
 
@@ -184,6 +185,9 @@ html, body {
     <button id="modal-cancel" class="hidden">Cancel</button>
   </div>
 </div>
+
+<input type="file" id="gpx-file-input" accept=".gpx,application/gpx+xml" style="display:none">
+
 
 <div id="toast-container"></div>
 
@@ -491,7 +495,8 @@ function closeModal() { document.getElementById("modal-overlay").classList.add("
 var HOWTO_TEXT =
   "Walk around with this page open and location access on.\n\n" +
   "Every hex you step into for the first time gets claimed. Step into it again later and it counts as another visit - each visit deepens its color, from cool blue toward deep red.\n\n" +
-  "Leaving a hex and coming straight back in does not count twice: a hex only counts again once " + Math.round(COOLDOWN_MS / 60000) + " minutes have passed since your last counted visit there.";
+  "Leaving a hex and coming straight back in does not count twice: a hex only counts again once " + Math.round(COOLDOWN_MS / 60000) + " minutes have passed since your last counted visit there.\n\n" +
+  "Recorded a run or walk on a watch instead of carrying this page open? Export it from your tracker as a .gpx file, then use Menu > Import a GPX track to credit those hexes after the fact.";
 
 function openHowToModal() {
   openModal({ title: "How it works", body: HOWTO_TEXT, okText: "Got it" });
@@ -525,6 +530,129 @@ function openResetModal() {
   });
 }
 
+// ---- GPX import ---------------------------------------------------------
+// Lets a run/walk recorded on a watch (Garmin or otherwise) count toward
+// exploration after the fact: export the activity as a .gpx from Garmin
+// Connect (or any GPS tracker that produces GPX), then replay its trackpoints
+// through the same hex-entry rule the live tracker uses - just driven by the
+// track's own recorded timestamps instead of Date.now(), so the 5-minute
+// cooldown applies exactly as if the page had been open during the run.
+
+// GPX's default XML namespace does not stop getElementsByTagName from
+// matching un-prefixed elements like <trkpt> by local name - no need for
+// getElementsByTagNameNS here.
+function parseGpxTrack(text) {
+  var xml = new DOMParser().parseFromString(text, "application/xml");
+  if (xml.getElementsByTagName("parsererror").length) {
+    throw new Error("That file doesn't look like valid GPX/XML.");
+  }
+  var trkpts = xml.getElementsByTagName("trkpt");
+  if (!trkpts.length) throw new Error("No track points found in this file.");
+
+  var points = [];
+  for (var i = 0; i < trkpts.length; i++) {
+    var el = trkpts[i];
+    var lat = parseFloat(el.getAttribute("lat"));
+    var lng = parseFloat(el.getAttribute("lon"));
+    if (!isFinite(lat) || !isFinite(lng)) continue;
+    var timeEl = el.getElementsByTagName("time")[0];
+    var t = timeEl ? Date.parse(timeEl.textContent) : NaN;
+    points.push({ lat: lat, lng: lng, time: isFinite(t) ? t : null });
+  }
+  if (!points.length) throw new Error("No usable track points found in this file.");
+  return points;
+}
+
+// Some GPX exports (or hand-built routes) omit <time> entirely. When that
+// happens we can still preserve the file's point order - which is all the
+// cooldown check actually needs - by chaining synthetic one-second-apart
+// timestamps from the first known time (or "now" if none exist at all).
+// This means imported hexes may end up with a cooldown clock anchored near
+// import time rather than the run's real time; that tradeoff is called out
+// in the result the user sees.
+function fillMissingTimes(points) {
+  var anyReal = points.some(function (p) { return p.time !== null; });
+  var hadGaps = false;
+  var prev = anyReal ? null : Date.now() - points.length * 1000;
+  points.forEach(function (p) {
+    if (p.time === null) {
+      hadGaps = true;
+      p.time = prev !== null ? prev + 1000 : Date.now();
+    }
+    prev = p.time;
+  });
+  return hadGaps;
+}
+
+// Mirrors enterHex()'s cooldown rule exactly, but against a supplied
+// timestamp instead of Date.now(), and without touching the live
+// currentHexKey or firing a toast per point (a run can be thousands of
+// points - one summary at the end is enough).
+function importTrackPoints(points) {
+  var localCurrent = null;
+  var newHexes = 0, newVisits = 0;
+  points.forEach(function (p) {
+    if (!CELL_LNG_DEG) {
+      CELL_LNG_DEG = CELL_LAT_DEG / Math.cos(p.lat * Math.PI / 180);
+      state.cellLngDeg = CELL_LNG_DEG;
+    }
+    var h = latLngToHex(p.lat, p.lng);
+    var key = hexKey(h.q, h.r);
+    if (key === localCurrent) return;
+    localCurrent = key;
+
+    var rec = state.visits[key];
+    if (!rec) { rec = { count: 0, lastEnteredAt: 0 }; state.visits[key] = rec; }
+    if (p.time - rec.lastEnteredAt >= COOLDOWN_MS) {
+      if (rec.count === 0) newHexes++;
+      rec.count += 1;
+      rec.lastEnteredAt = p.time;
+      newVisits++;
+    }
+  });
+  saveState();
+  updateStats();
+  updateHexPanel();
+  scheduleGridRedraw();
+  return { pointCount: points.length, newHexes: newHexes, newVisits: newVisits };
+}
+
+function handleGpxFile(file) {
+  var reader = new FileReader();
+  reader.onload = function () {
+    var points, hadGaps;
+    try {
+      points = parseGpxTrack(String(reader.result));
+      hadGaps = fillMissingTimes(points);
+    } catch (err) {
+      openModal({ title: "Import failed", body: err.message, okText: "Got it" });
+      return;
+    }
+    // GPX trackpoints are written in the order they were recorded, but sort
+    // defensively - some tools (or a hand-edited file) could hand us a track
+    // out of order, which would scramble the cooldown math.
+    points.sort(function (a, b) { return a.time - b.time; });
+    var result = importTrackPoints(points);
+    var body = "Read " + result.pointCount + " points from \"" + file.name + "\".\n\n" +
+      result.newHexes + " new hex" + (result.newHexes === 1 ? "" : "es") + " claimed, " +
+      result.newVisits + " visit" + (result.newVisits === 1 ? "" : "s") + " added.";
+    if (hadGaps) {
+      body += "\n\nThis file had no timestamps on some or all points, so cooldown timing for those hexes was anchored to import time rather than when the run actually happened.";
+    }
+    openModal({ title: "Import complete", body: body, okText: "Got it" });
+  };
+  reader.onerror = function () {
+    openModal({ title: "Import failed", body: "Could not read that file.", okText: "Got it" });
+  };
+  reader.readAsText(file);
+}
+
+var gpxInput = document.getElementById("gpx-file-input");
+gpxInput.onchange = function () {
+  if (gpxInput.files && gpxInput.files[0]) handleGpxFile(gpxInput.files[0]);
+  gpxInput.value = ""; // allow re-importing the same file name later
+};
+
 // ---- Menu -------------------------------------------------------------
 var menuEl = document.getElementById("menu-dropdown");
 document.getElementById("menu-btn").onclick = function (e) {
@@ -533,6 +661,7 @@ document.getElementById("menu-btn").onclick = function (e) {
 };
 document.addEventListener("click", function () { menuEl.classList.add("hidden"); });
 document.getElementById("menu-howto").onclick = openHowToModal;
+document.getElementById("menu-import").onclick = function () { gpxInput.click(); };
 document.getElementById("menu-reset").onclick = openResetModal;
 
 // ---- Location tracking -------------------------------------------------

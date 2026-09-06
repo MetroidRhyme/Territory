@@ -31,6 +31,18 @@ dependency beyond Leaflet.js (CDN) and map tiles. GitHub repo:
   hex's fill.
 - Below `GRID_MIN_ZOOM` (16) or above `GRID_MAX_CELLS` (2500) hexes in view,
   the mesh is skipped entirely rather than drawn cheaply-but-badly.
+- **GPX import** (Menu > Import a GPX track): lets a run/walk recorded on a
+  watch (e.g. exported from Garmin Connect) count after the fact.
+  `parseGpxTrack` reads `<trkpt>` elements via `DOMParser`/`getElementsByTagName`
+  (GPX's default namespace doesn't stop unprefixed-tag lookups). `importTrackPoints`
+  mirrors `enterHex`'s cooldown rule exactly but against each point's own
+  recorded timestamp instead of `Date.now()`, using a separate local
+  "current hex" variable so a bulk import never disturbs the live tracker's
+  `currentHexKey` or spams a toast per point - one summary modal at the end
+  instead. `fillMissingTimes` synthesizes sequential timestamps for tracks
+  (or points) lacking `<time>`, so cooldown math still has *something* to
+  compare against, at the cost of anchoring those hexes' cooldown clocks near
+  import time rather than the run's real time.
 
 ## Encoding
 

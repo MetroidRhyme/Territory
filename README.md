@@ -15,6 +15,11 @@ amber - red) the more times you revisit it.
 - **Re-entry cooldown**: leaving a hex and stepping straight back in does not
   count as a new visit - a hex only counts again once 5 minutes have passed
   since your last counted visit there.
+- **Import a GPX track**: recorded a run or walk on a watch (Garmin or
+  otherwise) instead of carrying this page open? Export the activity as a
+  `.gpx` file and use Menu > Import a GPX track - it replays the track's own
+  recorded points through the same rule above, using the track's real
+  timestamps so the cooldown applies exactly as if you'd had the page open.
 
 No accounts, no server, no build step - it's a single `index.html` file using
 [Leaflet.js](https://leafletjs.com/) (loaded from a CDN) for the map, the
